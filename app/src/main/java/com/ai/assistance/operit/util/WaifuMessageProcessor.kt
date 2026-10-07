@@ -72,28 +72,30 @@ object WaifuMessageProcessor {
                 return emptyList()
             }
 
-            if (segments.size < emittedSegments.size) {
-                AppLogger.w(
-                    "WaifuMessageProcessor",
-                    "流式分句结果短于已输出结果，忽略本次快照: emitted=${emittedSegments.size}, current=${segments.size}"
-                )
-                return emptyList()
+            // 与本轮已输出的段落求最长公共前缀：
+            // 前缀一致时只补发新增的尾部；前缀发生变化（实体占位符被替换、工具调用后
+            // 重建缓冲区等）时，从分歧点重新对齐并补发后面的内容。
+            //
+            // 旧实现在前缀对不上时直接 return emptyList()（连最终快照也丢），
+            // 于是回复的尾部永远发不出来，表现为「话说一半、没下文」——
+            // 日志里那条「流式分句前缀发生变化，忽略不可回滚的增量输出」就是它。
+            var commonPrefix = 0
+            val sharedLength = minOf(emittedSegments.size, segments.size)
+            while (commonPrefix < sharedLength && emittedSegments[commonPrefix] == segments[commonPrefix]) {
+                commonPrefix += 1
             }
 
-            val prefixMatches =
-                emittedSegments.indices.all { index ->
-                    emittedSegments[index] == segments[index]
-                }
-            if (!prefixMatches) {
+            if (commonPrefix < emittedSegments.size) {
                 AppLogger.w(
                     "WaifuMessageProcessor",
-                    "流式分句前缀发生变化，忽略不可回滚的增量输出"
+                    "流式分句前缀发生变化，按最新快照重新对齐并补发: common=$commonPrefix, " +
+                        "emitted=${emittedSegments.size}, current=${segments.size}"
                 )
-                return emptyList()
             }
 
-            val newSegments = segments.drop(emittedSegments.size)
-            emittedSegments.addAll(newSegments)
+            val newSegments = segments.drop(commonPrefix)
+            emittedSegments.clear()
+            emittedSegments.addAll(segments)
             return newSegments
         }
     }
